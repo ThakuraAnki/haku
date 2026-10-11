@@ -1,0 +1,11 @@
+FastAPI
+uvicorn
+pandas
+numpy
+scipy
+httpx
+pydantic
+pyyaml
+apscheduler
+python-dotenv
+boto3

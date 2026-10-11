@@ -1,0 +1,98 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  ProWater (HWSI) - Heat-Water Stress Decision Support System
+  Infrastructure as Code for AWS App Runner, S3 Data Lake, and Bedrock integration.
+
+Parameters:
+  AwsRegion:
+    Type: String
+    Default: ap-southeast-2
+    Description: AWS Region for Bedrock model invocation and data lake.
+  
+  S3BucketName:
+    Type: String
+    Default: prowater-data-lake-pilot
+    Description: Name of the Amazon S3 bucket for geospatial datasets and run snapshots.
+
+Resources:
+  # S3 Bucket for GeoJSON Boundaries & Daily Allocation Snapshots
+  ProWaterDataLakeBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref S3BucketName
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  # IAM Role for Bedrock & S3 Access
+  ProWaterBackendExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - build.apprunner.amazonaws.com
+                - tasks.apprunner.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ProWaterBedrockAndS3Policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource: !Sub 'arn:aws:bedrock:${AwsRegion}::foundation-model/*'
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub 'arn:aws:s3:::${ProWaterDataLakeBucket}'
+                  - !Sub 'arn:aws:s3:::${ProWaterDataLakeBucket}/*'
+
+  # App Runner Service (Serverless Backend Container)
+  ProWaterAppRunnerService:
+    Type: AWS::AppRunner::Service
+    Properties:
+      ServiceName: prowater-hwsi-backend
+      SourceConfiguration:
+        AutoDeploymentsEnabled: false
+        AuthenticationConfiguration:
+          AccessRoleArn: !GetAtt ProWaterBackendExecutionRole.Arn
+        ImageRepository:
+          ImageIdentifier: public.ecr.aws/prowater/hwsi-backend:latest
+          ImageRepositoryType: ECR_PUBLIC
+          ImageConfiguration:
+            Port: '8000'
+            RuntimeEnvironmentVariables:
+              - Name: AWS_DEFAULT_REGION
+                Value: !Ref AwsRegion
+              - Name: S3_BUCKET_NAME
+                Value: !Ref S3BucketName
+      InstanceConfiguration:
+        Cpu: '1 vCPU'
+        Memory: '2 GB'
+        InstanceRoleArn: !GetAtt ProWaterBackendExecutionRole.Arn
+
+Outputs:
+  ServiceUrl:
+    Description: URL of the deployed HWSI FastAPI backend
+    Value: !GetAtt ProWaterAppRunnerService.ServiceUrl
+  S3BucketArn:
+    Description: ARN of the S3 Data Lake Bucket
+    Value: !GetAtt ProWaterDataLakeBucket.Arn
